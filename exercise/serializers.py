@@ -30,3 +30,8 @@ class CreateGradingSerializer(serializers.ModelSerializer):
     class Meta:
         model = Grading
         fields = ['submission', 'auto_score', 'manual_score', 'feedback']
+
+class ExerciseSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Exercise
+        fields = ['id', 'title', 'description', 'due_date', 'max_score']

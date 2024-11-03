@@ -1,5 +1,5 @@
 from django.shortcuts import render
-from rest_framework.generics import CreateAPIView, ListAPIView
+from rest_framework.generics import CreateAPIView, ListAPIView, RetrieveUpdateAPIView
 from rest_framework.response import Response
 from rest_framework import status
 from .serializers import (
@@ -72,4 +72,18 @@ class CreateGrading(CreateAPIView):
         serializer.save()
 
 
-# You can add more views for listing, updating, and deleting exercises and submissions as needed
+class ExerciseEditView(RetrieveUpdateAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = ExerciseSerializer
+    queryset = Exercise.objects.all()
+    lookup_field = 'id'  # Look up exercises by their ID in the URL
+
+    def put(self, request, *args, **kwargs):
+        exercise = self.get_object()
+        user_profile = request.user.userprofile  # Assumes UserProfile has the role information
+
+        # Check if the user is a teacher or mentor for permission to edit
+        if user_profile not in exercise.online_class.teachers.all() and user_profile not in exercise.online_class.mentors.all():
+            return Response({"message": "You don't have permission to edit this exercise."}, status=status.HTTP_403_FORBIDDEN)
+        
+        return self.update(request, *args, **kwargs)
