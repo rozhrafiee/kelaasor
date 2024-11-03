@@ -8,4 +8,5 @@ urlpatterns = [
     path('api/', include('userapp.urls')),
     path('api/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),  # Token obtain URL
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),  # Token refresh URL
+    path('exercises/', include('exercise.urls'))
 ]
