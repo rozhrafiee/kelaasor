@@ -1,182 +1,172 @@
-from rest_framework.views import APIView
+from django.shortcuts import get_object_or_404
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
-from django.shortcuts import get_object_or_404
-from .models import OnlineClass, UserProfile, ClassMembership
-from .serializers import AddUserToClassSerializer, OnlineClassSerializer
+from rest_framework.generics import CreateAPIView, UpdateAPIView, ListAPIView, RetrieveAPIView, DestroyAPIView
+from rest_framework.exceptions import PermissionDenied
+from .models import OnlineClass, ClassMembership
+from userapp.models import UserProfile
+from .serializers import OnlineClassSerializer, ClassMembershipSerializer
+from django.core.mail import send_mail
 from django.contrib.auth.models import User
+class CreateOnlineClass(CreateAPIView):
+    serializer_class = OnlineClassSerializer
+
+    def create(self, request, *args, **kwargs):
+        # Get the professor by username (you can also use 'name' or 'email')
+        professor_username = request.data.get('professor_username')
+        try:
+            professor = User.objects.get(username=professor_username)
+        except User.DoesNotExist:
+            return Response(
+                {"detail": "Professor not found."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Create the class with the professor as the creator
+        new_class = OnlineClass.objects.create(
+            title=request.data['title'],
+            start_date=request.data['start_date'],
+            end_date=request.data['end_date'],
+            created_by=professor.userprofile,  # Assuming UserProfile is linked to User
+        )
+
+        # Serialize and return the class details in the response
+        return Response(
+            {"message": "Class created successfully", "class": OnlineClassSerializer(new_class).data},
+            status=status.HTTP_201_CREATED
+        )
 
 
-# Create a new class
-
-class CreateClassView(APIView):
+class UpdateOnlineClass(UpdateAPIView):
+    """Updates an existing online class."""
     permission_classes = [IsAuthenticated]
+    queryset = OnlineClass.objects.all()
+    serializer_class = OnlineClassSerializer
 
-    def post(self, request, *args, **kwargs):
-        serializer = OnlineClassSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        
-        online_class = serializer.save(created_by=request.user.userprofile)
-        return Response({'message': 'Class created successfully', 'class': serializer.data}, status=status.HTTP_201_CREATED)
-
-# Update an existing class
-
-class UpdateClassView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def put(self, request, pk, *args, **kwargs):
-        online_class = get_object_or_404(OnlineClass, id=pk)
-        serializer = OnlineClassSerializer(online_class, data=request.data, partial=True)
-        serializer.is_valid(raise_exception=True)
-        
+    def perform_update(self, serializer):
+        online_class = self.get_object()
+        if online_class.created_by != self.request.user.userprofile:
+            raise PermissionDenied("You are not the professor of this class.")
         serializer.save()
-        return Response({'message': 'Class updated successfully', 'class': serializer.data}, status=status.HTTP_200_OK)
 
-# Show mentors, teachers, and students of a class
 
-class ShowClassMembersView(APIView):
+class ListOnlineClasses(ListAPIView):
+    """Lists all classes the user is enrolled in."""
     permission_classes = [IsAuthenticated]
+    serializer_class = OnlineClassSerializer
 
-    def get(self, request, pk, *args, **kwargs):
-        online_class = get_object_or_404(OnlineClass, id=pk)
-        mentors = online_class.mentors.all().values('id', 'user__username')
-        teachers = online_class.teachers.all().values('id', 'user__username')
-        students = online_class.students.all().values('id', 'user__username')
+    def get_queryset(self):
+        return OnlineClass.objects.filter(students=self.request.user.userprofile)
 
-        return Response({
-            'mentors': list(mentors),
-            'teachers': list(teachers),
-            'students': list(students)
-        }, status=status.HTTP_200_OK)
 
-# Enter a class by code and password
-
-class EnterClassView(APIView):
+class RetrieveOnlineClass(RetrieveAPIView):
+    """Retrieve details of a single class."""
     permission_classes = [IsAuthenticated]
+    queryset = OnlineClass.objects.all()
+    serializer_class = OnlineClassSerializer
 
-    def post(self, request, *args, **kwargs):
-        class_code = request.data.get("code")
-        password = request.data.get("password")
+
+class AddMentorToClass(CreateAPIView):
+    """Adds a mentor to a class."""
+    permission_classes = [IsAuthenticated]
+    serializer_class = ClassMembershipSerializer
+
+    def perform_create(self, serializer):
+        online_class = get_object_or_404(OnlineClass, pk=self.request.data['class_id'])
+        if online_class.created_by != self.request.user.userprofile:
+            raise PermissionDenied("You are not the professor of this class.")
         
-        try:
-            online_class = OnlineClass.objects.get(code=class_code)
-            if online_class.password != password:
-                return Response({'error': 'Invalid password'}, status=status.HTTP_403_FORBIDDEN)
-            return Response({'message': 'Successfully entered the class', 'class_id': online_class.id}, status=status.HTTP_200_OK)
-        except OnlineClass.DoesNotExist:
-            return Response({'error': 'Class not found'}, status=status.HTTP_404_NOT_FOUND)
+        mentor = get_object_or_404(UserProfile, id=self.request.data['mentor_id'])
+        serializer.save(online_class=online_class, user_profile=mentor, role='mentor')
 
-# Add and remove a teacher
 
-class AddTeacherView(APIView):
+class AddTeacherToClass(CreateAPIView):
+    """Adds a teacher to a class."""
     permission_classes = [IsAuthenticated]
+    serializer_class = ClassMembershipSerializer
 
-    def post(self, request, *args, **kwargs):
-        serializer = AddUserToClassSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        class_code = serializer.validated_data['code']
-        teacher_username = serializer.validated_data['username']
+    def perform_create(self, serializer):
+        online_class = get_object_or_404(OnlineClass, pk=self.request.data['class_id'])
+        if online_class.created_by != self.request.user.userprofile:
+            raise PermissionDenied("You are not the professor of this class.")
         
-        online_class = get_object_or_404(OnlineClass, code=class_code)
-        try:
-            teacher = User.objects.get(username=teacher_username).userprofile
-            online_class.teachers.add(teacher)
-            return Response({'message': 'Teacher successfully added.'}, status=status.HTTP_200_OK)
-        except User.DoesNotExist:
-            return Response({'error': 'Teacher not found.'}, status=status.HTTP_404_NOT_FOUND)
+        teacher = get_object_or_404(UserProfile, id=self.request.data['teacher_id'])
+        serializer.save(online_class=online_class, user_profile=teacher, role='professor')
 
-class RemoveTeacherView(APIView):
+class AddStudentToClass(CreateAPIView):
+    """Adds a student to a class."""
+    permission_classes = [IsAuthenticated]
+    serializer_class = ClassMembershipSerializer
+
+    def perform_create(self, serializer):
+        online_class = get_object_or_404(OnlineClass, pk=self.request.data['class_id'])
+        if online_class.created_by != self.request.user.userprofile:
+            raise PermissionDenied("You are not the professor of this class.")
+
+        student = get_object_or_404(UserProfile, id=self.request.data['student_id'])
+        serializer.save(online_class=online_class, user_profile=student, role='student')
+
+
+
+class RemoveStudentFromClass(DestroyAPIView):
+    """Removes a student from a class."""
+    permission_classes = [IsAuthenticated]
+    queryset = ClassMembership.objects.all()
+
+    def perform_destroy(self, instance):
+        online_class = instance.online_class
+        if online_class.created_by != self.request.user.userprofile:
+            raise PermissionDenied("You are not the professor of this class.")
+        instance.delete()
+
+
+class EnterTheClassByPasswordView(CreateAPIView):
+    """Handles class entry via password for private classes."""
+    permission_classes = [IsAuthenticated]
+    serializer_class = ClassMembershipSerializer
+
+    def perform_create(self, serializer):
+        online_class = get_object_or_404(OnlineClass, pk=self.request.data['class_id'])
+        if online_class.is_private and online_class.entrance_code != self.request.data['entrance_code']:
+            raise PermissionDenied("Invalid entrance code.")
+        
+        student = self.request.user.userprofile
+        serializer.save(online_class=online_class, user_profile=student, role='student')
+
+
+class SendInviteView(CreateAPIView):
+    """Sends an invitation email to a user to join a private class."""
     permission_classes = [IsAuthenticated]
 
-    def post(self, request, *args, **kwargs):
-        serializer = AddUserToClassSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+    def perform_create(self, serializer):
+        online_class = get_object_or_404(OnlineClass, pk=self.request.data['class_id'])
+        if online_class.created_by != self.request.user.userprofile:
+            raise PermissionDenied("You are not the professor of this class.")
 
-        class_code = serializer.validated_data['code']
-        teacher_username = serializer.validated_data['username']
+        email = self.request.data['email']
+        send_mail(
+            'Invitation to join class',
+            f'You are invited to join the class {online_class.title}. Use the code {online_class.entrance_code} to enter.',
+            'from@example.com',
+            [email],
+            fail_silently=False,
+        )
+        return Response({"message": "Invitation sent successfully."}, status=status.HTTP_200_OK)
 
-        online_class = get_object_or_404(OnlineClass, code=class_code)
-        try:
-            teacher = User.objects.get(username=teacher_username).userprofile
-            online_class.teachers.remove(teacher)
-            return Response({'message': 'Teacher successfully removed.'}, status=status.HTTP_200_OK)
-        except User.DoesNotExist:
-            return Response({'error': 'Teacher not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-# Add and remove a mentor
-
-class AddMentorView(APIView):
+class ConfirmEnrollmentView(RetrieveAPIView):
+    """Confirms the enrollment of a user into a class."""
     permission_classes = [IsAuthenticated]
+    queryset = ClassMembership.objects.all()
+    serializer_class = ClassMembershipSerializer
 
-    def post(self, request, *args, **kwargs):
-        serializer = AddUserToClassSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+    def get(self, request, *args, **kwargs):
+        online_class = get_object_or_404(OnlineClass, pk=request.data['class_id'])
+        student = request.user.userprofile
+        membership = ClassMembership.objects.filter(online_class=online_class, user_profile=student).first()
 
-        class_code = serializer.validated_data['code']
-        mentor_username = serializer.validated_data['username']
-
-        online_class = get_object_or_404(OnlineClass, code=class_code)
-        try:
-            mentor = User.objects.get(username=mentor_username).userprofile
-            online_class.mentors.add(mentor)
-            return Response({'message': 'Mentor successfully added.'}, status=status.HTTP_200_OK)
-        except User.DoesNotExist:
-            return Response({'error': 'Mentor not found.'}, status=status.HTTP_404_NOT_FOUND)
-
-class RemoveMentorView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request, *args, **kwargs):
-        serializer = AddUserToClassSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        class_code = serializer.validated_data['code']
-        mentor_username = serializer.validated_data['username']
-
-        online_class = get_object_or_404(OnlineClass, code=class_code)
-        try:
-            mentor = User.objects.get(username=mentor_username).userprofile
-            online_class.mentors.remove(mentor)
-            return Response({'message': 'Mentor successfully removed.'}, status=status.HTTP_200_OK)
-        except User.DoesNotExist:
-            return Response({'error': 'Mentor not found.'}, status=status.HTTP_404_NOT_FOUND)
-
-# Add and remove a student
-
-class AddStudentView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request, *args, **kwargs):
-        serializer = AddUserToClassSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        class_code = serializer.validated_data['code']
-        student_username = serializer.validated_data['username']
-
-        online_class = get_object_or_404(OnlineClass, code=class_code)
-        try:
-            student = User.objects.get(username=student_username).userprofile
-            online_class.students.add(student)
-            return Response({'message': 'Student successfully added.'}, status=status.HTTP_200_OK)
-        except User.DoesNotExist:
-            return Response({'error': 'Student not found.'}, status=status.HTTP_404_NOT_FOUND)
-
-class RemoveStudentView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request, *args, **kwargs):
-        serializer = AddUserToClassSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        class_code = serializer.validated_data['code']
-        student_username = serializer.validated_data['username']
-
-        online_class = get_object_or_404(OnlineClass, code=class_code)
-        try:
-            student = User.objects.get(username=student_username).userprofile
-            online_class.students.remove(student)
-            return Response({'message': 'Student successfully removed.'}, status=status.HTTP_200_OK)
-        except User.DoesNotExist:
-            return Response({'error': 'Student not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if not membership:
+            raise PermissionDenied("You are not enrolled in this class.")
+        
+        return Response({"message": "You are successfully enrolled in this class."})
