@@ -1,15 +1,16 @@
-from django.shortcuts import get_object_or_404
-from rest_framework.permissions import IsAuthenticated
+from django.contrib.auth.hashers import check_password
+from rest_framework.views import APIView
 from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
+from django.core.mail import send_mail
 from rest_framework.generics import CreateAPIView, UpdateAPIView, ListAPIView, RetrieveAPIView, DestroyAPIView
 from rest_framework.exceptions import PermissionDenied
 from .models import OnlineClass, ClassMembership
 from userapp.models import UserProfile
-from .serializers import OnlineClassSerializer, ClassMembershipSerializer
-from django.core.mail import send_mail
+from .serializers import OnlineClassSerializer, ClassMembershipSerializer, EnterTheClassByPasswordSerializer
+from django.shortcuts import get_object_or_404
 from django.contrib.auth.models import User
-
 
 class CreateOnlineClass(CreateAPIView):
     serializer_class = OnlineClassSerializer
@@ -113,30 +114,39 @@ class RemoveStudentFromClass(DestroyAPIView):
         instance.delete()
 
 
-class EnterTheClassByPasswordView(CreateAPIView):
+class EnterTheClassByPasswordView(APIView):
     permission_classes = [IsAuthenticated]
-    serializer_class = ClassMembershipSerializer
 
-    def perform_create(self, serializer):
-        class_name = self.request.data.get('class_name')
-        student_name = self.request.data.get('student_name')
-        entrance_code = self.request.data.get('entrance_code')
+    def post(self, request, *args, **kwargs):
+        serializer = EnterTheClassByPasswordSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        try:
+            userprofile = request.user.userprofile
+            online_class_code = serializer.validated_data['code']
+            password = serializer.validated_data['password']
 
-        if not class_name or not student_name or not entrance_code:
-            raise PermissionDenied("Class name, student name, and entrance code are required.")
+            # Get the OnlineClass object using the class code
+            online_class = OnlineClass.objects.get(code=online_class_code)
 
-        online_class = get_object_or_404(OnlineClass, title=class_name)
+            # Check if the user is already a member of the class
+            if userprofile in online_class.students.all() or userprofile in online_class.mentors.all() or userprofile in online_class.teachers.all():
+                return Response({'message': 'You are already a member of this class'}, status=status.HTTP_400_BAD_REQUEST)
 
-        if online_class.is_private and online_class.entrance_code != entrance_code:
-            raise PermissionDenied("Invalid entrance code.")
+            # Check if the provided password matches the hashed password in the database
+            if not check_password(password, online_class.password):  # Correct way to check against hashed password
+                return Response({'message': 'Incorrect password'}, status=status.HTTP_401_UNAUTHORIZED)
 
-        student = get_object_or_404(UserProfile, user__username=student_name)
-
-        if student != self.request.user.userprofile:
-            raise PermissionDenied("You are not authorized to enter this class.")
-
-        serializer.save(online_class=online_class, user_profile=student, role='student')
-
+            # Add the user to the class's student list
+            online_class.students.add(userprofile)
+            
+            return Response({'message': 'Password is correct and you are added to the class'}, status=status.HTTP_200_OK)
+        
+        except OnlineClass.DoesNotExist:    
+            return Response({'message': 'Online class not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            # Catch any other exceptions and return an appropriate error message
+            return Response({'message': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class SendInviteView(CreateAPIView):
@@ -172,6 +182,7 @@ class ConfirmEnrollmentView(RetrieveAPIView):
             raise PermissionDenied("You are not enrolled in this class.")
         
         return Response({"message": "You are successfully enrolled in this class."})
+
 
 class ListAllOnlineClasses(ListAPIView):
     permission_classes = [IsAuthenticated]

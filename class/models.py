@@ -17,6 +17,7 @@ class OnlineClass(models.Model):
 
     code = models.CharField(max_length=10, unique=True, blank=True, null=True)
     created_by = models.ForeignKey(UserProfile, on_delete=models.CASCADE, related_name='created_classes')
+    password = models.CharField(max_length=255, blank=True, null=True)
 
     is_private = models.BooleanField(default=False)
     entrance_code = models.CharField(max_length=10, blank=True, null=True)
