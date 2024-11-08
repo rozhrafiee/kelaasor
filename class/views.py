@@ -118,12 +118,25 @@ class EnterTheClassByPasswordView(CreateAPIView):
     serializer_class = ClassMembershipSerializer
 
     def perform_create(self, serializer):
-        online_class = get_object_or_404(OnlineClass, pk=self.request.data['class_id'])
-        if online_class.is_private and online_class.entrance_code != self.request.data['entrance_code']:
+        class_name = self.request.data.get('class_name')
+        student_name = self.request.data.get('student_name')
+        entrance_code = self.request.data.get('entrance_code')
+
+        if not class_name or not student_name or not entrance_code:
+            raise PermissionDenied("Class name, student name, and entrance code are required.")
+
+        online_class = get_object_or_404(OnlineClass, title=class_name)
+
+        if online_class.is_private and online_class.entrance_code != entrance_code:
             raise PermissionDenied("Invalid entrance code.")
-        
-        student = self.request.user.userprofile
+
+        student = get_object_or_404(UserProfile, user__username=student_name)
+
+        if student != self.request.user.userprofile:
+            raise PermissionDenied("You are not authorized to enter this class.")
+
         serializer.save(online_class=online_class, user_profile=student, role='student')
+
 
 
 class SendInviteView(CreateAPIView):
@@ -159,3 +172,10 @@ class ConfirmEnrollmentView(RetrieveAPIView):
             raise PermissionDenied("You are not enrolled in this class.")
         
         return Response({"message": "You are successfully enrolled in this class."})
+
+class ListAllOnlineClasses(ListAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = OnlineClassSerializer
+
+    def get_queryset(self):
+        return OnlineClass.objects.all()
