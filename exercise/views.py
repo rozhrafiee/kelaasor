@@ -1,23 +1,20 @@
-from django.shortcuts import render
-from rest_framework.generics import CreateAPIView, ListAPIView, RetrieveUpdateAPIView
-from rest_framework.response import Response
+from django.shortcuts import get_object_or_404
 from rest_framework import status
-from .serializers import (
-    ExerciseSerializer,
-    CreateSubmissionSerializer,
-    GradingSerializer,
-)
-from .models import Exercise, Submission, Grading
+from rest_framework.generics import CreateAPIView, ListAPIView, UpdateAPIView, RetrieveAPIView, DestroyAPIView
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from .models import Exercise, Submission, Grading
+from .serializers import ExerciseSerializer, SubmissionSerializer, GradingSerializer
+from userapp.models import UserProfile
+
 
 class CreateExercise(CreateAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = ExerciseSerializer
-    queryset = Exercise.objects.all()
 
     def perform_create(self, serializer):
-        # Additional checks for creating exercises can be added here
-        return super().perform_create(serializer)
+        creator = self.request.user.userprofile
+        serializer.save(created_by=creator)
 
 
 class ListExercises(ListAPIView):
@@ -25,65 +22,67 @@ class ListExercises(ListAPIView):
     serializer_class = ExerciseSerializer
 
     def get_queryset(self):
-        # You can filter exercises based on certain criteria
-        return Exercise.objects.all()
+        return Exercise.objects.filter(created_by=self.request.user.userprofile)
 
 
-class CreateSubmission(CreateAPIView):
+class RetrieveExercise(RetrieveAPIView):
     permission_classes = [IsAuthenticated]
-    serializer_class = CreateSubmissionSerializer
-    queryset = Submission.objects.all()
+    queryset = Exercise.objects.all()
+    serializer_class = ExerciseSerializer
+
+
+class SubmitAssignment(CreateAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = SubmissionSerializer
 
     def perform_create(self, serializer):
+        exercise = get_object_or_404(Exercise, pk=self.request.data['exercise_id'])
         student = self.request.user.userprofile
-        exercise = serializer.validated_data['exercise']
-
-        # Check if the student is allowed to submit for the exercise
-        if student not in exercise.online_class.students.all():
-            return Response({"message": "you can't submit for this exercise"}, status=status.HTTP_403_FORBIDDEN)
-
-        serializer.save(student=student)
+        serializer.save(exercise=exercise, student=student)
 
 
 class ListSubmissions(ListAPIView):
     permission_classes = [IsAuthenticated]
-    serializer_class = CreateSubmissionSerializer
+    serializer_class = SubmissionSerializer
 
     def get_queryset(self):
-        exercise_id = self.request.query_params.get('exercise_id')
-        if exercise_id:
-            return Submission.objects.filter(exercise_id=exercise_id)
-        return Submission.objects.none()
+        return Submission.objects.filter(student=self.request.user.userprofile)
 
 
-class CreateGrading(CreateAPIView):
+class GradeSubmission(UpdateAPIView):
     permission_classes = [IsAuthenticated]
+    queryset = Submission.objects.all()
     serializer_class = GradingSerializer
-    queryset = Grading.objects.all()
 
-    def perform_create(self, serializer):
-        submission = serializer.validated_data['submission']
-        user_profile = self.request.user.userprofile
-        
-        # Check if the user is authorized to grade submissions
-        if user_profile not in submission.exercise.online_class.teachers.all():
-            return Response({"message": "you can't grade this submission"}, status=status.HTTP_403_FORBIDDEN)
-        
+    def perform_update(self, serializer):
+        submission = self.get_object()
+        if submission.exercise.created_by != self.request.user.userprofile:
+            return Response(
+                {"detail": "You are not the creator of this exercise."},
+                status=status.HTTP_403_FORBIDDEN
+            )
         serializer.save()
 
 
-class ExerciseEditView(RetrieveUpdateAPIView):
+class DeleteSubmission(DestroyAPIView):
     permission_classes = [IsAuthenticated]
-    serializer_class = ExerciseSerializer
-    queryset = Exercise.objects.all()
-    lookup_field = 'id'  # Look up exercises by their ID in the URL
+    queryset = Submission.objects.all()
 
-    def put(self, request, *args, **kwargs):
-        exercise = self.get_object()
-        user_profile = request.user.userprofile  # Assumes UserProfile has the role information
+    def perform_destroy(self, instance):
+        if instance.student != self.request.user.userprofile:
+            return Response(
+                {"detail": "You are not allowed to delete this submission."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        instance.delete()
 
-        # Check if the user is a teacher or mentor for permission to edit
-        if user_profile not in exercise.online_class.teachers.all() and user_profile not in exercise.online_class.mentors.all():
-            return Response({"message": "You don't have permission to edit this exercise."}, status=status.HTTP_403_FORBIDDEN)
-        
-        return self.update(request, *args, **kwargs)
+
+class GradeReport(RetrieveAPIView):
+    permission_classes = [IsAuthenticated]
+    queryset = Grading.objects.all()
+    serializer_class = GradingSerializer
+
+    def get(self, request, *args, **kwargs):
+        submission = get_object_or_404(Submission, pk=self.kwargs['pk'])
+        grading = get_object_or_404(Grading, submission=submission)
+        return Response(GradingSerializer(grading).data)

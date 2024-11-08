@@ -9,11 +9,12 @@ from userapp.models import UserProfile
 from .serializers import OnlineClassSerializer, ClassMembershipSerializer
 from django.core.mail import send_mail
 from django.contrib.auth.models import User
+
+
 class CreateOnlineClass(CreateAPIView):
     serializer_class = OnlineClassSerializer
 
     def create(self, request, *args, **kwargs):
-        # Get the professor by username (you can also use 'name' or 'email')
         professor_username = request.data.get('professor_username')
         try:
             professor = User.objects.get(username=professor_username)
@@ -23,15 +24,13 @@ class CreateOnlineClass(CreateAPIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Create the class with the professor as the creator
         new_class = OnlineClass.objects.create(
             title=request.data['title'],
             start_date=request.data['start_date'],
             end_date=request.data['end_date'],
-            created_by=professor.userprofile,  # Assuming UserProfile is linked to User
+            created_by=professor.userprofile,
         )
 
-        # Serialize and return the class details in the response
         return Response(
             {"message": "Class created successfully", "class": OnlineClassSerializer(new_class).data},
             status=status.HTTP_201_CREATED
@@ -39,7 +38,6 @@ class CreateOnlineClass(CreateAPIView):
 
 
 class UpdateOnlineClass(UpdateAPIView):
-    """Updates an existing online class."""
     permission_classes = [IsAuthenticated]
     queryset = OnlineClass.objects.all()
     serializer_class = OnlineClassSerializer
@@ -52,7 +50,6 @@ class UpdateOnlineClass(UpdateAPIView):
 
 
 class ListOnlineClasses(ListAPIView):
-    """Lists all classes the user is enrolled in."""
     permission_classes = [IsAuthenticated]
     serializer_class = OnlineClassSerializer
 
@@ -61,14 +58,12 @@ class ListOnlineClasses(ListAPIView):
 
 
 class RetrieveOnlineClass(RetrieveAPIView):
-    """Retrieve details of a single class."""
     permission_classes = [IsAuthenticated]
     queryset = OnlineClass.objects.all()
     serializer_class = OnlineClassSerializer
 
 
 class AddMentorToClass(CreateAPIView):
-    """Adds a mentor to a class."""
     permission_classes = [IsAuthenticated]
     serializer_class = ClassMembershipSerializer
 
@@ -82,7 +77,6 @@ class AddMentorToClass(CreateAPIView):
 
 
 class AddTeacherToClass(CreateAPIView):
-    """Adds a teacher to a class."""
     permission_classes = [IsAuthenticated]
     serializer_class = ClassMembershipSerializer
 
@@ -94,8 +88,8 @@ class AddTeacherToClass(CreateAPIView):
         teacher = get_object_or_404(UserProfile, id=self.request.data['teacher_id'])
         serializer.save(online_class=online_class, user_profile=teacher, role='professor')
 
+
 class AddStudentToClass(CreateAPIView):
-    """Adds a student to a class."""
     permission_classes = [IsAuthenticated]
     serializer_class = ClassMembershipSerializer
 
@@ -108,9 +102,7 @@ class AddStudentToClass(CreateAPIView):
         serializer.save(online_class=online_class, user_profile=student, role='student')
 
 
-
 class RemoveStudentFromClass(DestroyAPIView):
-    """Removes a student from a class."""
     permission_classes = [IsAuthenticated]
     queryset = ClassMembership.objects.all()
 
@@ -122,7 +114,6 @@ class RemoveStudentFromClass(DestroyAPIView):
 
 
 class EnterTheClassByPasswordView(CreateAPIView):
-    """Handles class entry via password for private classes."""
     permission_classes = [IsAuthenticated]
     serializer_class = ClassMembershipSerializer
 
@@ -136,7 +127,6 @@ class EnterTheClassByPasswordView(CreateAPIView):
 
 
 class SendInviteView(CreateAPIView):
-    """Sends an invitation email to a user to join a private class."""
     permission_classes = [IsAuthenticated]
 
     def perform_create(self, serializer):
@@ -156,7 +146,6 @@ class SendInviteView(CreateAPIView):
 
 
 class ConfirmEnrollmentView(RetrieveAPIView):
-    """Confirms the enrollment of a user into a class."""
     permission_classes = [IsAuthenticated]
     queryset = ClassMembership.objects.all()
     serializer_class = ClassMembershipSerializer

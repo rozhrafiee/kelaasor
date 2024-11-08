@@ -1,21 +1,16 @@
 from django.urls import path
 from .views import (
-    CreateExercise,
-    ListExercises,
-    CreateSubmission,
-    ListSubmissions,
-    CreateGrading,
-    ExerciseEditView,
-    
+    CreateExercise, ListExercises, RetrieveExercise, SubmitAssignment, ListSubmissions,
+    GradeSubmission, DeleteSubmission, GradeReport
 )
 
 urlpatterns = [
-    path('exercises/', ListExercises.as_view(), name='list-exercises'),  # List all exercises
-    path('exercises/create/', CreateExercise.as_view(), name='create-exercise'),  # Create a new exercise
-    path('submissions/', ListSubmissions.as_view(), name='list-submissions'),  # List submissions for an exercise
-    path('submissions/create/', CreateSubmission.as_view(), name='create-submission'),  # Create a new submission
-    path('grading/create/', CreateGrading.as_view(), name='create-grading'),  # Create a new grading entr
-    path('exercises/<int:id>/edit/', ExerciseEditView.as_view(), name='edit-exercise'),
-    # other URLs...
+    path('create/', CreateExercise.as_view(), name='create_exercise'),
+    path('list/', ListExercises.as_view(), name='list_exercises'),
+    path('retrieve/<int:pk>/', RetrieveExercise.as_view(), name='retrieve_exercise'),
+    path('submit/', SubmitAssignment.as_view(), name='submit_assignment'),
+    path('submissions/', ListSubmissions.as_view(), name='list_submissions'),
+    path('grade/<int:pk>/', GradeSubmission.as_view(), name='grade_submission'),
+    path('delete-submission/<int:pk>/', DeleteSubmission.as_view(), name='delete_submission'),
+    path('grade-report/<int:pk>/', GradeReport.as_view(), name='grade_report'),
 ]
-
